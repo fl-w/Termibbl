@@ -1,17 +1,30 @@
-pub use crate::*;
-pub mod app;
-pub mod error;
-pub mod ui;
+mod app;
+mod error;
+mod net;
+mod ui;
 
-#[derive(FromArgs)]
+pub use app::App;
+pub use crossterm::event::Event as InputEvent;
+
+use argh::FromArgs;
+
+use self::net::NetEvent;
+
 /// play Skribbl.io-like games in the Termibbl
+#[derive(FromArgs)]
 #[argh(subcommand, name = "client")]
 pub struct CliOpts {
     #[argh(positional)]
     ///username to connect as.
-    pub username: String,
+    pub username: Option<String>,
 
-    #[argh(option, short = 'a')]
+    #[argh(option, short = 'h')]
     /// address of server to connect to.
-    pub addr: String,
+    pub host: Option<String>,
+}
+
+pub enum Event {
+    Redraw,
+    Input(InputEvent),
+    Net(NetEvent),
 }

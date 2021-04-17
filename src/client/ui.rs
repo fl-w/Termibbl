@@ -1,269 +1,321 @@
+mod canvas;
+pub mod input;
+pub mod room;
+pub mod start;
+
+use std::io::Stdout;
+
 use crate::{
-    client::app::{App, AppCanvas},
-    client::error::Result,
-    data::{Coord, Message},
-    server::skribbl::{PlayerState, SkribblState},
+    message::ChatMessage,
+    world::{Coord, DrawingWord, Game, Player, Username},
 };
 
-use super::Username;
+use crossterm::event::{KeyEvent, MouseEvent};
 use tui::{
-    backend::Backend,
+    backend::CrosstermBackend,
+    buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
-    widgets::{Block, Borders, List, Paragraph, Text, Widget},
-    Terminal,
+    text::Span,
+    widgets::{Block, Borders, List, ListItem, Paragraph, StatefulWidget, Widget},
+    Frame,
 };
 
-pub fn draw<B: Backend>(app: &mut App, terminal: &mut Terminal<B>) -> Result<()> {
-    let dimensions = app.canvas.dimensions;
-    terminal.draw(|mut f| {
-        use Constraint::*;
-        let size = f.size();
-        let main_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .margin(0)
-            .constraints(
-                [
-                    Length(dimensions.0 as u16),
-                    Length(if size.width < dimensions.0 as u16 {
-                        size.width
-                    } else {
-                        size.width - dimensions.0 as u16
-                    }),
-                ]
-                .as_ref(),
-            )
-            .split(size);
+use self::{
+    canvas::{Palette, TermCanvas},
+    input::{Cursor, InputText},
+};
 
-        let canvas_widget = CanvasWidget::new(
-            &app.canvas,
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(app.current_color.into())),
-        );
+use Constraint::*;
 
-        let game_state_height = app
-            .game_state
-            .as_ref()
-            .map(|x| x.player_states.len() + 3)
-            .unwrap_or(0) as u16;
+pub type Action = Box<dyn Fn(&mut super::App)>;
+pub type Backend = CrosstermBackend<Stdout>;
 
-        let sidebar_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .margin(0)
-            .constraints([Length(game_state_height), Percentage(100)].as_ref())
-            .split(main_chunks[1]);
+pub fn backend() -> Backend { CrosstermBackend::new(std::io::stdout()) }
 
-        if let Some(skribbl_state) = app.game_state.as_mut() {
-            let skribbl_widget = SkribblStateWidget::new(
-                &skribbl_state,
-                &app.session.username,
-                app.remaining_time.unwrap_or(0),
-                Block::default().borders(Borders::NONE),
-            );
-            f.render_widget(skribbl_widget, sidebar_chunks[0]);
+#[macro_export]
+macro_rules! do_nothing {
+    () => {
+        Box::new(|_| ())
+    };
+}
+
+pub trait View {
+    fn on_resize(&mut self, size: Coord) -> Action;
+    fn on_key_event(&mut self, event: KeyEvent) -> Action;
+    fn on_mouse_event(&mut self, event: MouseEvent) -> Action;
+    fn draw(&mut self, frame: &mut Frame<Backend>);
+}
+
+pub trait ElementHolder {
+    fn element_in<E: Element>(&self, coord: Coord) -> Option<&E>;
+    fn element_in_mut<E: Element>(&mut self, coord: Coord) -> Option<&mut E>;
+}
+
+pub trait Element: Sized {
+    fn on_resize(&mut self, bounds: Rect) -> Action;
+    fn coord_within(&self, coord: Coord) -> bool;
+    fn render(&self, area: Rect, buf: &mut Buffer);
+    // fn render_stateful(&self, area: Rect, buf: &mut Buffer);
+    fn as_widget(&self) -> ElementWidet<'_, Self> {
+        ElementWidet {
+            inner: Box::new(self),
         }
-
-        let canvas_rect = Rect {
-            height: u16::min(dimensions.1 as u16, main_chunks[0].height),
-            ..main_chunks[0]
-        };
-        f.render_widget(canvas_widget, canvas_rect);
-
-        let displayed_messages = (&app.chat.messages)
-            .iter()
-            .filter(|msg| match msg {
-                Message::SystemMsg(_) => true,
-                Message::UserMsg(username, _) => app.game_state.as_ref().map_or(true, |state| {
-                    app.is_drawing()
-                        || app.own_player().map_or(false, |x| x.has_solved)
-                        || (&state.drawing_user != username
-                            && !state
-                                .player_states
-                                .get(&username)
-                                .map_or(false, |player_state| player_state.has_solved))
-                }),
-            })
-            .collect::<Vec<_>>();
-
-        let chat_widget = ChatWidget::new(
-            displayed_messages.as_slice(),
-            &app.chat.input,
-            Block::default().borders(Borders::NONE),
-        );
-        f.render_widget(chat_widget, sidebar_chunks[1]);
-    })?;
-    Ok(())
-}
-
-pub struct CanvasWidget<'a, 't> {
-    block: Block<'a>,
-    canvas: &'t AppCanvas,
-}
-
-impl<'a, 't> CanvasWidget<'a, 't> {
-    pub fn new(canvas: &'t AppCanvas, block: Block<'a>) -> CanvasWidget<'a, 't> {
-        CanvasWidget { block, canvas }
     }
 }
 
-impl<'a, 't, 'b> Widget for CanvasWidget<'a, 't> {
-    fn render(self, area: tui::layout::Rect, buf: &mut tui::buffer::Buffer) {
-        self.block.render(area, buf);
-        let area = self.block.inner(area);
+pub struct ElementWidet<'a, E: Element> {
+    inner: Box<&'a E>,
+}
 
-        for line in self.canvas.lines.iter() {
-            for cell in line.coords_in() {
-                if cell.within(
-                    &Coord(area.x, area.y),
-                    &Coord(area.x + area.width, area.y + area.height),
-                ) {
-                    buf.get_mut(cell.0, cell.1).set_bg(line.color.into());
+impl<'a, E> Widget for ElementWidet<'a, E>
+where
+    E: Element,
+{
+    fn render(self, area: Rect, buf: &mut Buffer) { self.inner.render(area, buf) }
+}
+
+#[derive(Default)]
+pub struct BlockWidget<'a, T> {
+    /// A block to wrap the widget in
+    block: Option<Block<'a>>,
+    widget: Option<T>,
+}
+
+impl<'a, T> BlockWidget<'a, T> {
+    pub fn new() -> Self {
+        Self {
+            block: None,
+            widget: None,
+        }
+    }
+
+    pub fn block(mut self, block: Block<'a>) -> BlockWidget<'a, T> {
+        self.block = Some(block);
+        self
+    }
+
+    pub fn widget(mut self, widget: T) -> BlockWidget<'a, T> {
+        self.widget = Some(widget);
+        self
+    }
+
+    fn widget_area(&mut self, area: Rect, buf: &mut Buffer) -> Rect {
+        match self.block.take() {
+            Some(b) => {
+                let inner_area = b.inner(area);
+                b.render(area, buf);
+                inner_area
+            }
+            None => area,
+        }
+    }
+}
+
+impl<'a, T> Widget for BlockWidget<'a, T>
+where
+    T: Widget,
+{
+    fn render(mut self, area: Rect, buf: &mut Buffer) {
+        let widget_area = self.widget_area(area, buf);
+
+        if let Some(widget) = self.widget.take() {
+            widget.render(widget_area, buf)
+        }
+    }
+}
+
+impl<'a, T> StatefulWidget for BlockWidget<'a, T>
+where
+    T: StatefulWidget,
+{
+    type State = T::State;
+
+    fn render(mut self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let widget_area = self.widget_area(area, buf);
+
+        if let Some(widget) = self.widget.take() {
+            widget.render(widget_area, buf, state)
+        }
+    }
+}
+
+pub struct CanvasWidget<'a> {
+    canvas: &'a TermCanvas,
+    palette: &'a Palette,
+}
+
+impl<'a> CanvasWidget<'a> {
+    const PALETTE_HEIGHT: u16 = 2;
+    pub fn new(canvas: &'a TermCanvas, palette: &'a Palette) -> CanvasWidget<'a> {
+        CanvasWidget { canvas, palette }
+    }
+}
+
+impl<'a, 'b> Widget for CanvasWidget<'a> {
+    fn render(self, area: tui::layout::Rect, buf: &mut tui::buffer::Buffer) {
+        let layout = Layout::default()
+            .constraints([Percentage(100), Length(Self::PALETTE_HEIGHT)])
+            .split(area);
+
+        // draw palette
+        let swatch_size = area.width / canvas::PALETTE.len() as u16;
+
+        for (idx, col) in canvas::PALETTE.iter().enumerate() {
+            for offset in 0..swatch_size {
+                for y in 0..Self::PALETTE_HEIGHT - 1 {
+                    buf.get_mut((swatch_size * idx as u16) + offset, y)
+                        .set_bg((*col).into());
                 }
             }
         }
-        let swatch_size = area.width / self.canvas.palette.len() as u16;
-        for (idx, col) in self.canvas.palette.iter().enumerate() {
-            for offset in 0..swatch_size {
-                buf.get_mut(offset + (idx as u16 * swatch_size), 0)
-                    .set_bg((*col).into());
-            }
-        }
+
+        // draw canvas
+        self.canvas.render(layout[0], buf);
     }
 }
 
-pub struct ChatWidget<'a, 't> {
-    block: Block<'a>,
-    messages: &'t [&'t Message],
-    input: &'t str,
+pub struct ChatWidget<'t> {
+    messages: &'t [ChatMessage],
+    input: &'t InputText,
 }
 
-impl<'a, 't> ChatWidget<'a, 't> {
-    pub fn new(messages: &'t [&Message], input: &'t str, block: Block<'a>) -> ChatWidget<'a, 't> {
-        ChatWidget {
-            block,
-            messages,
-            input,
-        }
+impl<'t> ChatWidget<'t> {
+    pub fn new(messages: &'t [ChatMessage], input: &'t InputText) -> ChatWidget<'t> {
+        ChatWidget { messages, input }
     }
 }
-impl<'a, 't, 'b> Widget for ChatWidget<'a, 't> {
-    fn render(self, area: tui::layout::Rect, buf: &mut tui::buffer::Buffer) {
-        use Constraint::*;
-        self.block.render(area, buf);
-        let area = self.block.inner(area);
 
-        let chunks = Layout::default()
+impl<'a, 'b> StatefulWidget for ChatWidget<'a> {
+    type State = Cursor;
+
+    fn render(
+        self,
+        area: tui::layout::Rect,
+        buf: &mut tui::buffer::Buffer,
+        cursor: &mut Self::State,
+    ) {
+        let mut chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(0)
-            .constraints([Length(3), Percentage(100)].as_ref())
-            .split(area);
+            .constraints([Length(3), Length(area.height - 3)].as_ref())
+            .split(area)
+            .into_iter();
 
-        Paragraph::new([Text::Raw(self.input.clone().into())].iter())
+        let chat_messages: Vec<ListItem> = self
+            .messages
+            .iter()
+            .rev()
+            .map(|msg| {
+                Span::styled(
+                    format!("{}", msg),
+                    if msg.is_system() {
+                        Style::default().fg(Color::Cyan)
+                    } else {
+                        Style::default()
+                    },
+                )
+            })
+            .map(ListItem::new)
+            .collect();
+
+        Paragraph::new(self.input.content())
             .block(Block::default().borders(Borders::ALL).title("Your message"))
-            .render(chunks[0], buf);
+            .render(chunks.next().unwrap(), buf);
 
-        List::new(self.messages.iter().rev().map(|msg| {
-            Text::styled(
-                format!("{}", msg),
-                if msg.is_system() {
-                    Style::default().fg(Color::Cyan)
-                } else {
-                    Style::default()
-                },
-            )
-        }))
-        .block(Block::default().borders(Borders::ALL).title("Chat"))
-        .render(chunks[1], buf);
+        <List as Widget>::render(
+            List::new(chat_messages).block(Block::default().borders(Borders::LEFT).title("Chat")),
+            chunks.next().unwrap(),
+            buf,
+        );
+
+        if self.input.has_focus() {
+            cursor.set(area.x + self.input.cursor() as u16, area.y);
+        }
     }
 }
 
-pub struct SkribblStateWidget<'a, 't> {
-    block: Block<'a>,
-    state: &'t SkribblState,
+pub struct SkribblStateWidget<'t> {
+    game: &'t Game,
+    players: &'t [Player],
     username: &'t Username,
     remaining_time: u32,
 }
-impl<'a, 't> SkribblStateWidget<'a, 't> {
+
+impl<'t> SkribblStateWidget<'t> {
     pub fn new(
-        state: &'t SkribblState,
         username: &'t Username,
-        remaining_time: u32,
-        block: Block<'a>,
-    ) -> SkribblStateWidget<'a, 't> {
+        players: &'t [Player],
+        game: &'t Game,
+        // remaining_time: u32,
+    ) -> SkribblStateWidget<'t> {
         SkribblStateWidget {
-            block,
-            state,
+            game,
+            players,
             username,
-            remaining_time,
+            remaining_time: 0,
         }
     }
 }
 
-impl<'a, 't, 'b> Widget for SkribblStateWidget<'a, 't> {
+impl<'a, 'b> Widget for SkribblStateWidget<'a> {
     fn render(self, area: tui::layout::Rect, buf: &mut tui::buffer::Buffer) {
-        self.block.render(area, buf);
-        let area = self.block.inner(area);
-
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(0)
             .constraints([Constraint::Length(1), Constraint::Percentage(100)].as_ref())
             .split(area);
 
-        let is_drawing = self.state.drawing_user == *self.username;
+        let (hint, style) = match &self.game.turn.word {
+            DrawingWord::Guess {
+                hints,
+                word_len,
+                who,
+            } => {
+                // get the placeholder chars for the current word, with the revealed characters revealed.
+                let hint = (0..*word_len)
+                    .map(|ref idx| hints.get(idx).cloned().unwrap_or('?'))
+                    .collect::<String>();
 
-        let current_word_representation = if is_drawing {
-            self.state.current_word().to_string()
-        } else {
-            self.state.hinted_current_word().to_string()
+                (format!("{} drawing {}", who.name(), hint), Style::default())
+            }
+            DrawingWord::Draw(word) => (format!("Draw {}", word), Style::default().bg(Color::Red)),
         };
 
-        Paragraph::new(
-            [Text::Styled(
-                format!(
-                    "{} drawing {}",
-                    self.state.drawing_user, current_word_representation
-                )
-                .into(),
-                if is_drawing {
-                    Style::default().bg(Color::Red)
-                } else {
-                    Style::default()
-                },
-            )]
-            .iter(),
-        )
-        .render(chunks[0], buf);
+        Paragraph::new(Span::styled(hint, style)).render(chunks[0], buf);
 
-        let mut sorted_player_entries = self
-            .state
-            .player_states
+        let player_list: Vec<ListItem> = self
+            .players
             .iter()
-            .collect::<Vec<(&Username, &PlayerState)>>();
-        sorted_player_entries.sort_by_key(|(x, _)| *x);
+            .map(|ref player| {
+                let username = &player.name;
+                let is_drawing = match &self.game.turn.word {
+                    DrawingWord::Draw(_) => username == self.username,
+                    DrawingWord::Guess { who, .. } => username == who,
+                };
 
-        List::new(
-            sorted_player_entries
-                .into_iter()
-                .map(|(username, player_state)| {
-                    Text::styled(
-                        format!("{}: {}", username, player_state.score,),
-                        if self.state.drawing_user == *username {
-                            Style::default().bg(tui::style::Color::Cyan)
-                        } else if self.state.has_solved(username) {
-                            Style::default().fg(tui::style::Color::Green)
-                        } else {
-                            Style::default()
-                        },
-                    )
-                }),
-        )
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(&format!("Players [time: {}]", self.remaining_time)),
-        )
-        .render(chunks[1], buf);
+                Span::styled(
+                    format!("{}: {}", username, player.score,),
+                    if is_drawing {
+                        Style::default().bg(tui::style::Color::Cyan)
+                    } else if player.solved_current_round {
+                        Style::default().fg(tui::style::Color::Green)
+                    } else {
+                        Style::default()
+                    },
+                )
+            })
+            .map(ListItem::new)
+            .collect();
+
+        <List as Widget>::render(
+            List::new(player_list).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!("Players [time: {}]", self.remaining_time)),
+            ),
+            chunks[1],
+            buf,
+        );
     }
 }
