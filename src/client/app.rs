@@ -19,7 +19,7 @@ use crate::{
 
 use super::{
     app_server::{AppServer, NetEvent},
-    error::Result,
+    error::{Error, Result},
     ui::{self, Room, StartMenu, View},
     InputEvent,
 };
@@ -197,8 +197,10 @@ impl App {
                 } else if let ToClient::JoinRoom(initial_room_state) = *message {
                     self.state = Room::new(initial_room_state).into();
                 } else {
-                    self.exit();
-                    unimplemented!("msg {:#?}", *message);
+                    return Err(Error::UnimplementedFeature(format!(
+                        "net event {:?}",
+                        *message
+                    )));
                 }
             }
         }
