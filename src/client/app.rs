@@ -37,7 +37,7 @@ enum State {
 }
 
 impl Default for State {
-    fn default() -> Self { Self::Start(StartMenu::default()) }
+    fn default() -> Self { Self::Start(StartMenu::new()) }
 }
 
 impl From<Room> for State {
@@ -102,6 +102,7 @@ impl App {
             State::InGameRoom(_) => {
                 self.server
                     .send_message(crate::message::ToServer::LeaveRoom);
+                self.goto_start();
             }
 
             State::Start(menu) => {
@@ -112,6 +113,28 @@ impl App {
                 }
             }
         };
+    }
+
+    fn goto_start(&mut self) {
+        let username = if let State::InGameRoom(room) = &mut self.state {
+            Some(room.username.to_string())
+        } else {
+            None
+        };
+
+        let mut start = StartMenu::new();
+
+        if let Some(host) = self.server.addr() {
+            start.host_input.set_content(host);
+            start.host_input.focus(false);
+            start.username_input.focus(true);
+        }
+
+        if let Some(username) = username {
+            start.username_input.set_content(username);
+        }
+
+        self.state = State::Start(start);
     }
 
     fn display_notif(&mut self, error: String) {
@@ -132,15 +155,13 @@ impl App {
             }
 
             NetEvent::Status(status) => {
-                let addr = self.server.addr();
                 self.server.set_status(status);
 
                 let is_connected = self.server.is_connected();
                 match &mut self.state {
                     State::InGameRoom(ref room) => {
                         if !is_connected {
-                            self.state =
-                                State::Start(StartMenu::new(addr, Some(room.username.to_string())));
+                            self.goto_start();
                         }
                     }
 
@@ -159,11 +180,7 @@ impl App {
                         ToClient::RoomEvent(event) => room.process_event(event),
                         ToClient::LeaveRoom(maybe_reason) => {
                             // kick to start screen
-                            self.state = State::Start(StartMenu::new(
-                                self.server.addr(),
-                                Some(room.username.to_string()),
-                            ));
-
+                            self.goto_start();
                             if let Some(reason) = maybe_reason {
                                 self.display_notif(reason)
                             }
@@ -180,7 +197,8 @@ impl App {
                 } else if let ToClient::JoinRoom(initial_room_state) = *message {
                     self.state = Room::new(initial_room_state).into();
                 } else {
-                    unimplemented!("msg {:#?}", *message)
+                    self.exit();
+                    unimplemented!("msg {:#?}", *message);
                 }
             }
         }
@@ -250,16 +268,8 @@ impl App {
     /// Start the main loop.
     ///
     /// This will listen to events and do the appropriate actions.
-    pub async fn start(&mut self) -> Result<()> {
-        let mut stdout = std::io::stdout();
-
-        enable_raw_mode()?;
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-
-        let input_task_handle = self.setup_input_events();
+    async fn start_loop(&mut self) -> Result<()> {
         let mut terminal = Terminal::new(ui::backend()).unwrap();
-        // TODO: display notifications if any.
-
         while !self.should_exit {
             terminal.draw(|frame| self.get_current_view().draw(frame, self))?;
 
@@ -280,6 +290,19 @@ impl App {
             }
         }
 
+        Ok(())
+    }
+
+    pub async fn start(&mut self) -> Result<()> {
+        let mut stdout = std::io::stdout();
+
+        enable_raw_mode()?;
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+
+        let input_task_handle = self.setup_input_events();
+        // TODO: display notifications if any.
+
+        let result = self.start_loop().await;
         self.server.disconnect();
 
         // stop listening for inputs
@@ -287,6 +310,7 @@ impl App {
 
         execute!(stdout, LeaveAlternateScreen, DisableMouseCapture)?;
         disable_raw_mode()?;
-        Ok(())
+
+        result
     }
 }
