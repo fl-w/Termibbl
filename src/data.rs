@@ -53,12 +53,16 @@ impl Debug for Username {
 /// A u16 point in 2D space.
 pub type Coord = (u16, u16);
 
+pub struct GameWordsOption {
+    pub use_server_words: bool,
+    // pub
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GameOpts {
     pub dimensions: Coord,
     pub number_of_rounds: usize,
     pub draw_time: usize,
-    pub custom_words: Vec<String>,
     pub only_custom_words: bool,
     // pub canvas_bg_color: Color,
 }

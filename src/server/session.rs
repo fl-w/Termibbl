@@ -27,6 +27,8 @@ pub enum Message {
     RoomEvent(RoomEvent),
     RoomJoined(EventSender<RoomMessage>, InitialRoomState),
     RoomNotFound,
+    JoinQueue,
+    LeaveQueue,
     Kick(String),
     RoomClosed,
 }
@@ -214,6 +216,13 @@ impl UserSession {
                 };
             }
 
+            &UserState::InQueue { .. } => {
+                if let ToServer::LeaveQueue = msg {
+                    self.server.send(ServerMessage::LeaveQueue { id: self.id });
+                    self.state = UserState::Idle;
+                }
+            }
+
             _ => (),
         }
     }
@@ -250,7 +259,7 @@ impl UserSession {
                     }
                 },
 
-                // Handler for Message, server/room sends this message,
+                // Handler for ``Message`, server/room sends this message to this loop,
                 // if its a `Message::ClientMsg` variant we forward to peer
                 Some(msg) = server_msg => {
                     match msg {
@@ -266,6 +275,8 @@ impl UserSession {
                             }
                         },
                         Message::Kick(reason) => self.kick(reason).await,
+                        Message::JoinQueue => self.send(ToClient::JoinQueue).await,
+                        Message::LeaveQueue => self.send(ToClient::LeaveQueue).await,
                         Message::RoomNotFound => {
                             self.state = UserState::Idle;
                             self.send(ToClient::LeaveRoom(Some("Room not found".to_owned()))).await;

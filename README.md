@@ -10,7 +10,7 @@ Created in Rust
 
 #### Nix
 ```sh
-git clone https://github.com/elkowar/Termibbl
+git clone https://github.com/fl-w/Termibbl
 cd Termibbl
 nix build
 ```
@@ -25,7 +25,7 @@ termibbl
 #### Cargo
 
 ```sh
-git clone https://github.com/elkowar/Termibbl
+git clone https://github.com/fl-w/Termibbl
 cd Termibbl
 cargo build --release
 ```
@@ -49,7 +49,7 @@ Which should be fine and not conflict with anything.
 #### Connecting to a server
 
 ```sh
-termibbl client --address <public termibbl adress>:<port> <username>
+termibbl client --host <public termibbl adress>:<port> <username>
 ```
 
 ### Usage

@@ -25,6 +25,7 @@ use super::{
 };
 
 pub enum Event {
+    Tick,
     Input(InputEvent),
     Net(NetEvent),
     CtrlC,
@@ -108,8 +109,11 @@ impl App {
             State::Start(menu) => {
                 if menu.host_input.has_focus() {
                     self.exit();
-                } else {
+                } else if menu.username_input.has_focus() {
                     self.server.disconnect();
+                } else if menu.in_queue() {
+                    self.server
+                        .send_message(crate::message::ToServer::LeaveQueue);
                 }
             }
         };
@@ -137,7 +141,7 @@ impl App {
         self.state = State::Start(start);
     }
 
-    fn display_notif(&mut self, error: String) {
+    fn display_notification(&mut self, error: String) {
         self.notifications.push(error);
         self.sender()
             .send_with_delay(Event::CloseNotification, Duration::from_secs(4));
@@ -145,7 +149,7 @@ impl App {
 
     fn handle_net_event(&mut self, event: NetEvent) -> Result<()> {
         match event {
-            NetEvent::SessionCreate(session) => {
+            NetEvent::SessionStart(session) => {
                 self.server.set_session(session)?;
 
                 let is_connected = self.server.is_connected();
@@ -173,34 +177,47 @@ impl App {
 
             NetEvent::Message(message) => {
                 if let ToClient::Disconnect(reason) = *message {
-                    // if server disconnects us
-                    self.display_notif(reason);
-                } else if let State::InGameRoom(room) = &mut self.state {
-                    match *message {
-                        ToClient::RoomEvent(event) => room.process_event(event),
-                        ToClient::LeaveRoom(maybe_reason) => {
-                            // kick to start screen
-                            self.goto_start();
-                            if let Some(reason) = maybe_reason {
-                                self.display_notif(reason)
-                            }
-                        }
-
-                        _ => {
-                            // server sent unknown message ... do nothing
-                            // panic!(
-                            // "server & client state not in sync {:?}",
-                            // message
-                            // ),
-                        }
-                    };
-                } else if let ToClient::JoinRoom(initial_room_state) = *message {
-                    self.state = Room::new(initial_room_state).into();
+                    // if server disconnects this client, display notification
+                    // detailing reason for disconnection.
+                    self.display_notification(reason);
                 } else {
-                    return Err(Error::UnimplementedFeature(format!(
-                        "net event {:?}",
-                        *message
-                    )));
+                    match &mut self.state {
+                        State::Start(start_menu) => {
+                            match *message {
+                                ToClient::JoinRoom(initial_room_state) => {
+                                    self.state = Room::new(initial_room_state).into();
+                                }
+                                ToClient::JoinQueue => start_menu.join_queue(),
+                                ToClient::LeaveQueue => start_menu.leave_queue(),
+                                _ => {
+                                    // server sent unknown message ...
+                                    return Err(Error::UnimplementedFeature(format!(
+                                        "unimplemented event message {:?}",
+                                        *message
+                                    )));
+                                }
+                            };
+                        }
+                        State::InGameRoom(room) => {
+                            match *message {
+                                ToClient::RoomEvent(event) => room.process_event(event),
+                                ToClient::LeaveRoom(maybe_reason) => {
+                                    // kick to start screen
+                                    self.goto_start();
+                                    if let Some(reason) = maybe_reason {
+                                        self.display_notification(reason)
+                                    }
+                                }
+
+                                _ => {
+                                    return Err(Error::UnimplementedFeature(format!(
+                                        "unimplemented in room event message {:?}",
+                                        *message
+                                    )));
+                                }
+                            };
+                        }
+                    }
                 }
             }
         }
@@ -271,11 +288,23 @@ impl App {
     ///
     /// This will listen to events and do the appropriate actions.
     async fn start_loop(&mut self) -> Result<()> {
+        let tick_interval = Duration::from_secs(1);
         let mut terminal = Terminal::new(ui::backend()).unwrap();
+
+        self.sender().send(Event::Tick);
         while !self.should_exit {
             terminal.draw(|frame| self.get_current_view().draw(frame, self))?;
 
             match self.event_queue.recv_async().await.unwrap() {
+                // handle tick
+                Event::Tick => {
+                    if let State::Start(start_menu) = &mut self.state {
+                        start_menu.tick()
+                    };
+
+                    self.sender().send_with_delay(Event::Tick, tick_interval);
+                }
+
                 // handle network events
                 Event::Net(net_event) => self.handle_net_event(net_event)?,
 

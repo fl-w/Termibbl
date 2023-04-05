@@ -2,11 +2,10 @@ use argh::FromArgs;
 use std::{fs, io::Read};
 
 use super::skribbl;
-use crate::data::{Coord, GameOpts};
+use crate::data::Coord;
 
 pub const DEFAULT_PORT: u16 = 9001;
 pub const DEFAULT_DIMENSIONS: Coord = (100, 900);
-pub const DEFAULT_WORDS: &str = include_str!("words_dump");
 pub const ROOM_KEY_LENGTH: usize = 5;
 
 type ParseResult<T> = std::result::Result<T, String>;
@@ -48,36 +47,20 @@ pub struct CliOpts {
 
     #[argh(option, default = "skribbl::DEFAULT_DRAW_TIME")]
     /// default drawing duration in seconds
-    draw_time: u64,
+    pub draw_time: u64,
 
     #[argh(option, default = "skribbl::DEFAULT_NUM_OF_ROUNDS")]
     /// default number of rounds per game
-    rounds: usize,
+    pub rounds: usize,
 
     /// default canvas dimensions <width>x<height>
     #[argh(option, default = "DEFAULT_DIMENSIONS", from_str_fn(parse_dimension))]
-    dimensions: Coord,
+    pub dimensions: Coord,
 
     /// optional path to custom word list
     #[argh(option, short = 'w', from_str_fn(parse_words_file))]
-    words: Option<String>,
-}
+    pub words: Option<String>,
 
-impl From<CliOpts> for GameOpts {
-    fn from(mut opt: CliOpts) -> Self {
-        GameOpts {
-            dimensions: opt.dimensions,
-            number_of_rounds: opt.rounds,
-            draw_time: opt.draw_time as usize,
-            custom_words: opt
-                .words
-                .take()
-                .unwrap_or_else(|| DEFAULT_WORDS.to_string())
-                .lines()
-                .map(|x| x.trim().to_string())
-                .filter(|x| !x.is_empty())
-                .collect::<Vec<_>>(),
-            only_custom_words: false,
-        }
-    }
+    #[argh(switch, short = 'd', description = "write out debug logs.")]
+    log_debug: bool,
 }

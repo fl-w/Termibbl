@@ -14,6 +14,7 @@ pub enum ToServer {
     Chat(ChatMessage),
     Draw(Draw),
     RequestRoom(Option<String>, RoomRequest), // optional nick & request
+    LeaveQueue,
     LeaveRoom,
     Disconnect,
 }
@@ -21,6 +22,8 @@ pub enum ToServer {
 /// Server -> Client
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ToClient {
+    JoinQueue,
+    LeaveQueue,
     RoomEvent(RoomEvent),
     JoinRoom(InitialRoomState),
     LeaveRoom(Option<String>), // reason for leaving

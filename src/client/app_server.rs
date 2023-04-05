@@ -30,7 +30,7 @@ impl Default for ConnectionStatus {
 }
 
 pub enum NetEvent {
-    SessionCreate(ServerSession),
+    SessionStart(ServerSession),
     Status(ConnectionStatus),
     Message(Box<message::ToClient>),
 }
@@ -112,7 +112,7 @@ impl AppServer {
             .map(move |result| {
                 let net_event = match result {
                     // create session to handle this socket and notify server
-                    Ok(socket) => NetEvent::SessionCreate(ServerSession::create(
+                    Ok(socket) => NetEvent::SessionStart(ServerSession::create(
                         server_addr,
                         app_tx.clone(),
                         socket.0,

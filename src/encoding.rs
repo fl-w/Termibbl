@@ -59,7 +59,7 @@ where
             buf.reserve(8);
             buf.put_u64(msg_len as u64);
         } else {
-            log::error!("payload size can't be larger than u64 can fit");
+            log::error!("payload size than 8-bytes is almost-universally a bad idea");
             return Err(Error::LargePayload);
         }
 

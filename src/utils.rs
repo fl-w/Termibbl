@@ -44,7 +44,6 @@ where
     W: serde::Serialize,
 {
     let (r, w) = tokio::io::split(st);
-    // let (r, w) = socket.into_split();
     (
         FramedRead::new(r, NetworkMessage::<R>::new()),
         FramedWrite::new(w, NetworkMessage::<W>::new()),
