@@ -120,6 +120,12 @@ impl WordHint {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum WordChoice {
+    ChoosingWord(Vec<String>),
+    Waiting,
+}
+
 /// list of states a turn could be in
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TurnPhase {

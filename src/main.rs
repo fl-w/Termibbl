@@ -29,7 +29,6 @@ enum SubOpt {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli: Opt = argh::from_env();
-    println!("hello world");
 
     // set default command to 'client'
     let cmd = cli
@@ -56,16 +55,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
             app.start().await?;
         }
 
-        SubOpt::Server(cli) => {
+        SubOpt::Server(mut cli) => {
             let port = cli.port;
+            let custom_word_list = cli.words.take();
             let default_game_opts = data::GameOpts {
                 dimensions: cli.dimensions,
                 number_of_rounds: cli.rounds,
                 draw_time: cli.draw_time as usize,
                 only_custom_words: false,
             };
-
-            server::run(port, default_game_opts, cli.words.take()).await?;
+            server::run(port, default_game_opts, custom_word_list).await?;
         }
     }
 

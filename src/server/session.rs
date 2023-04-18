@@ -23,6 +23,7 @@ type ClientMessageWriter = MessageWriter<ToClient>;
 pub type UserSessionInbox = EventSender<Message>;
 
 /// Chat server sends this messages to session
+#[derive(Debug)]
 pub enum Message {
     RoomEvent(RoomEvent),
     RoomJoined(EventSender<RoomMessage>, InitialRoomState),
@@ -178,6 +179,7 @@ impl UserSession {
                 if let ToServer::RequestRoom(maybe_name, req) = msg {
                     let username =
                         Username::new(maybe_name.unwrap_or_else(Self::generate_name), self.id);
+                    println!("requesting room: {} ", username);
 
                     self.state = UserState::InQueue {
                         username: username.clone(),
@@ -188,7 +190,7 @@ impl UserSession {
                         req,
                     });
                 } else {
-                    // TODO: recieved weird messaage from client, is client laggin? maybe disconnect
+                    // TODO: recieved unexpected messaage from client, is client out of sync? maybe disconnect
                 }
             }
 
@@ -262,6 +264,8 @@ impl UserSession {
                 // Handler for ``Message`, server/room sends this message to this loop,
                 // if its a `Message::ClientMsg` variant we forward to peer
                 Some(msg) = server_msg => {
+                    println!("sending msg to client {}: {:?}", self.id, msg);
+
                     match msg {
                         Message::RoomEvent(msg)=> {
                             if let UserState::InRoom { .. } = &self.state {
@@ -290,6 +294,7 @@ impl UserSession {
                 },
 
                 Some(msg) = client_msg => {
+                    println!("recieved msg from client {}: {:?}", self.id, msg);
                      match msg {
                          Ok(msg) =>  {
                              match msg {

@@ -1,4 +1,4 @@
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::ToSocketAddrs;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use tui::{
@@ -240,7 +240,7 @@ impl StatefulWidget for StartMenuInputWidget<'_> {
             InputWidget::new(
                 "Server addr:  ",
                 match start_menu.host_input.content().to_socket_addrs() {
-                    Err(_) => ("Use 'ip:port' syntax", Color::Yellow),
+                    Err(_) => ("use 'ip:port' syntax", Color::Yellow),
                     Ok(_) => connection_status,
                 },
                 &start_menu.host_input,

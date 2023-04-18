@@ -6,7 +6,6 @@ use crate::{
     data::{GameState, TurnPhase, UserId, Username, WordHint},
     events::{EventQueue, EventSender},
     message::{ChatMessage, Draw, GameEvent, InitialRoomState, RoomEvent, RoomInfo},
-    // utils,
 };
 
 use super::{
@@ -14,15 +13,14 @@ use super::{
         Message::{RoomClosed, RoomEvent as Event, RoomJoined},
         UserSessionInbox,
     },
-    skribbl::SkribblState,
+    skribbl::Skribbl,
     Error, GameOpts, Result,
 };
-
-const REQUIRED_PLAYERS: usize = 2;
 
 pub type RoomInbox = EventSender<RoomMessage>;
 
 /// List of messages a game room can recieve
+#[derive(Debug)]
 pub enum RoomMessage {
     /// Notify room of player join
     Join {
@@ -30,7 +28,7 @@ pub enum RoomMessage {
         inbox: UserSessionInbox,
     },
 
-    /// Notify room of player leaving
+    /// Notify room of player disconnect
     Leave { name: Username },
 
     /// Notify room of draw message
@@ -56,6 +54,9 @@ pub struct GameRoom {
     /// options of this room
     game_opts: GameOpts,
 
+    /// required number of players needed to start the game.
+    required_players: usize,
+
     /// The main server thread creates the shared Vec of words and passes a reference to the rooms.
     shared_server_words: Arc<Vec<String>>,
 
@@ -65,9 +66,23 @@ pub struct GameRoom {
     /// event queue for this room loop
     event_queue: EventQueue<RoomMessage>,
 
+    custom_words_list: Vec<String>,
+
     /// game struct
-    skribbl: Option<SkribblState>,
+    skribbl: Option<Skribbl>,
 }
+
+enum Game {
+
+}
+enum RoomState{
+    FreeDraw,
+    InGame()
+    RoundStart(usize),
+    Playing(Turn),
+    Finish,
+}
+
 
 impl From<GameState> for RoomEvent {
     fn from(val: GameState) -> Self { RoomEvent::GameEvent(GameEvent::StateUpdate(val)) }
@@ -91,6 +106,8 @@ impl GameRoom {
             shared_server_words: Arc::clone(server_words),
             sessions: HashMap::new(),
             event_queue: EventQueue::default(),
+            custom_words_list: vec![],
+            required_players: 2,
             skribbl: None,
         }
     }
@@ -118,8 +135,8 @@ impl GameRoom {
     fn broadcast_msg(&self, msg: ChatMessage) { self.broadcast(RoomEvent::Chat(msg)) }
 
     /// send a ChatMessage::SystemMsg to all active sessions in room
-    pub fn broadcast_system_msg(&self, msg: String) {
-        self.broadcast(RoomEvent::Chat(ChatMessage::System(msg)))
+    pub fn broadcast_system_msg<S: Into<String>>(&self, msg: S) {
+        self.broadcast(RoomEvent::Chat(ChatMessage::System(msg.into())))
     }
 
     /// broadcast a `RoomEvent` to all connected players
@@ -150,18 +167,25 @@ impl GameRoom {
     }
 
     fn start_game(&mut self) {
-        if self.skribbl.is_some() {
-            return log::warn!("room tried to start game when already started",);
+        if self.sessions.is_empty() {
+            log::warn!("room tried to start game with no players!");
+            return;
         }
 
-        if self.game_opts.only_custom_words && self.game_opts.custom_words.is_empty() {
+        if self.skribbl.is_some() {
+            log::warn!("room tried to start game when already started");
+            return;
+        }
+
+        if self.game_opts.only_custom_words && self.custom_words_list.is_empty() {
             // cannot start game with no guess words
+            self.broadcast_system_msg("Game cannot start with empty word list.".to_owned());
             return;
         }
 
         self.skribbl = Some({
             // create game with current game_opts
-            let game = SkribblState::new(
+            let game = Skribbl::new(
                 self.game_opts.clone(),
                 self.users(),
                 Arc::clone(&self.shared_server_words),
@@ -267,7 +291,7 @@ impl GameRoom {
             if let Some(ref mut game) = self.skribbl {
                 if self.sessions.is_empty() {
                     self.end_game();
-                } else if self.sessions.len() < REQUIRED_PLAYERS {
+                } else if self.sessions.len() < self.required_players {
                     // stop game when there isnt enough players
                     game.end();
                     let state = game.info.state.clone();
@@ -309,7 +333,7 @@ impl GameRoom {
         self.broadcast_system_msg(join_msg);
 
         // start game if there are enough players and no room leader
-        if self.leader.is_none() && self.sessions.len() >= REQUIRED_PLAYERS {
+        if self.leader.is_none() && self.sessions.len() >= self.required_players {
             self.start_game()
         }
     }

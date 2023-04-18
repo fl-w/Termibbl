@@ -10,12 +10,11 @@ use crate::{
     data::{GameOpts, UserId, Username},
     events::{EventQueue, EventSender},
     message::RoomRequest,
-    utils::{self, dispatch_abortable_task, AbortableTask},
+    utils::{self, AbortableTask},
 };
-use futures_util::StreamExt;
 use rand::{prelude::ThreadRng, Rng};
 use session::{User, UserSession};
-use std::{collections::HashMap, future::Future, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
 use tokio::net::{TcpListener, TcpStream};
 
@@ -27,6 +26,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     #[error("could not start webserver (could not bind)")]
     TcpBind,
+    #[error("empty optional that should not be empty.")]
+    EmptyOptional,
 }
 
 #[derive(Debug)]
@@ -38,6 +39,10 @@ pub enum Message {
     RoomClosed(String),
     LeaveQueue {
         id: UserId,
+    },
+    RoomRequest {
+        from: Username,
+        req: RoomRequest,
     },
 }
 
@@ -60,10 +65,11 @@ struct Game<'a> {
 pub struct GameServer {
     tcp_listener: TcpListener,
     event_queue: EventQueue<Message>,
-    /// hold the main game room
-    // room: Room,
+    /// hold the game rooms
+    rooms: HashMap<String, Room>,
     /// holds the default game configuration
     default_game_opts: GameOpts,
+    /// words list
     word_list: Vec<String>,
     /// holds connected users by id
     connected_users: HashMap<UserId, User>,
@@ -92,18 +98,16 @@ pub async fn run(
         default_game_opts,
         connected_users: HashMap::new(),
         word_list,
+        rooms: HashMap::new(),
         rng: rand::thread_rng(),
     };
 
     let event_tx = server.tx();
 
+    println!("🚀 Running Termibbl server on {}...", addr);
     tokio::select! {
-        res = server.run() => {
-            if let Err(err) = res {
-                // return Err(err);
-            } else {
-                println!("🚀 Running Termibbl server on {}...", addr);
-            }
+        Err(err) = server.run() => {
+            return Err(err);
         }
         _ = tokio::signal::ctrl_c() => {
             println!("✨ Ctrl-C received. Stopping..");
@@ -157,8 +161,6 @@ impl GameServer {
         if self.connected_users.remove(&id).is_some() {
             println!("#{} left the server", id);
         }
-
-        self.on_client_leave_queue(id);
     }
 
     fn kick_user<S: Into<String>>(&mut self, user_id: UserId, reason: S) {
@@ -168,18 +170,17 @@ impl GameServer {
         }
     }
 
-    fn on_room_close(&mut self, key: String) {
-        // if let Some(_room) = self.rooms.remove(&key) {
-        //     println!("closed room {}", key)
-        // }
-    }
-
-    fn dispatch_room(self, key: String, leader: Option<Username>) -> Room {
+    fn dispatch_room(&mut self, key: String, leader: Option<Username>) -> String {
         let is_private = leader.is_some();
         let server = self.tx().clone();
 
         // dispatch room
-        let mut room = GameRoom::new(key, self.default_game_opts.clone(), &self.words, leader);
+        let mut room = GameRoom::new(
+            key,
+            self.default_game_opts.clone(),
+            &Arc::new(self.word_list.clone()), // TODO: don;t clone
+            leader,
+        );
         let room_key = room.key().to_owned();
         let sender = room.sender().clone();
 
@@ -193,67 +194,40 @@ impl GameServer {
             server.send_with_urgency(Message::RoomClosed(room_key));
         });
 
-        Room {
+        let server_room = Room {
             inbox: sender,
             thread_handle,
             private: is_private,
+        };
+
+        self.rooms.insert(room_key.clone(), server_room);
+
+        room_key
+    }
+
+    fn on_client_room_request(&mut self, name: Username, action: RoomRequest) {
+        let user_id = name.id();
+        let inbox = if let Some(user) = self.connected_users.get_mut(&user_id) {
+            user.inbox.clone()
+        } else {
+            return;
+        };
+
+        let room_key = match action {
+            RoomRequest::Join(room_key) => room_key,
+            RoomRequest::Find => {
+                println!("{} joined room queue...", name);
+                // for now put into main game room
+
+                "main".to_owned()
+            }
+        };
+
+        if let Some(room) = self.rooms.get(&room_key) {
+            room.inbox.send(RoomMessage::Join { name, inbox });
+        } else {
+            inbox.send_with_urgency(session::Message::RoomNotFound);
         }
-    }
-
-    fn on_client_leave_queue(&mut self, id: UserId) {
-        // if let Some((idx, name)) = self
-        //     .game_queue
-        //     .iter()
-        //     .enumerate()
-        //     .find(|(_, name)| name.id() == id)
-        //     .map(|(idx, n)| (idx, n.clone()))
-        // {
-        //     self.game_queue.remove(idx);
-
-        //     if let Some(user) = self.connected_users.get(&id) {
-        //         user.inbox.send(session::Message::LeaveQueue);
-        //     }
-
-        //     println!("#{} left room queue...", name);
-        // }
-    }
-
-    fn on_room_request(&mut self, name: Username, action: RoomRequest) {
-        // let user_id = name.id();
-        // let inbox = if let Some(user) = self.connected_users.get_mut(&user_id) {
-        //     user.inbox.clone()
-        // } else {
-        //     return;
-        // };
-
-        // let room_key = match action {
-        //     RoomRequest::Join(room_key) => room_key,
-        //     RoomRequest::Create => {
-        //         let room_key = self.gen_key();
-        //         self.dispatch_room(room_key.clone(), Some(name.clone()));
-        //         println!("{} created room with key {}", name, room_key);
-
-        //         room_key
-        //     }
-
-        //     RoomRequest::Find => {
-        //         println!("{} joined room queue...", name);
-        //         inbox.send(session::Message::JoinQueue);
-        //         self.game_queue.push(name);
-
-        //         if self.game_queue.len() == 1 {
-        //             self.tx()
-        //                 .send_with_delay(Message::ClearQueue, Duration::from_secs(3));
-        //         }
-        //         return;
-        //     }
-        // };
-
-        // if let Some(room) = self.rooms.get(&room_key) {
-        //     room.inbox.send(RoomMessage::Join { name, inbox });
-        // } else {
-        //     inbox.send_with_urgency(session::Message::RoomNotFound);
-        // }
     }
 
     /// handle stream of TcpStream
@@ -273,13 +247,14 @@ impl GameServer {
 
     /// start server on given address
     pub async fn run(mut self) -> Result<()> {
+        self.dispatch_room("main".to_string(), None);
+
         loop {
             tokio::select! {
                 Some(event) = self.event_queue.recv_async() => {
                     match event {
-                        Message::LeaveQueue { id } => self.on_client_leave_queue(id),
+                        Message::RoomRequest{from, req} => self.on_client_room_request(from, req),
                         Message::Disconnect(id) => self.on_client_disconnect(id),
-                        Message::RoomClosed(key) => self.on_room_close(key),
                         _ => ()
                     }
                 }
@@ -289,7 +264,7 @@ impl GameServer {
                     if let Ok((socket, _)) = conn {
                         self.on_client_connect(socket)
                     } else {
-                        // err occurred whilst openning socket...
+                        log::error!("err occurred whilst openning socket...")
                     }
                 },
 
@@ -300,19 +275,19 @@ impl GameServer {
 
         println!("server closing");
 
-        // TODO: wait until connections are closed before returing...
-
         // disconnect users
         for (_, user) in self.connected_users.drain() {
             user.inbox
                 .send_with_urgency(session::Message::Kick("Server Shutdown".into()));
         }
 
-        // // close of game rooms
-        // for (_, room) in self.rooms.drain() {
-        //     room.inbox.send_with_urgency(RoomMessage::Close);
-        //     room.thread_handle.abort(); // dont wait for room to finish
-        // }
+        // TODO: wait until connections are closed before returing...
+
+        // close of game rooms
+        for (_, room) in self.rooms.drain() {
+            room.inbox.send_with_urgency(RoomMessage::Close);
+            room.thread_handle.abort(); // dont wait for room to finish
+        }
 
         Ok(())
     }

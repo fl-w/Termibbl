@@ -56,9 +56,7 @@ where
             .recv(&self.recv, |v| v.unwrap())
     }
 
-    fn next_instant(&self) -> Option<Instant> {
-        self.timers.iter().map(|(instant, _)| *instant).next()
-    }
+    fn next_instant(&self) -> Option<Instant> { self.timers.keys().copied().next() }
 
     fn next_timed_event(&mut self) -> Option<E> {
         self.next_instant().and_then(|instant| {
@@ -124,7 +122,7 @@ where
             select! {
                 event = self.urgent_recv.recv_async() => event.ok(),
                 event = self.recv.recv_async() => event.ok(),
-                _ = tokio::time::delay_until(next_instant.into()).fuse() => self.timers.remove(&next_instant),
+                _ = tokio::time::sleep_until(next_instant.into()).fuse() => self.timers.remove(&next_instant),
             }
         } else {
             select! {

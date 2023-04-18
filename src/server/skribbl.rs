@@ -73,7 +73,7 @@ impl Iterator for WordProducer {
 }
 
 /// Wrapper struct to handle server game events
-pub struct SkribblState {
+pub struct Skribbl {
     /// the current game state
     pub info: GameInfo,
 
@@ -90,14 +90,14 @@ pub struct SkribblState {
     draw_time: usize,
 }
 
-impl SkribblState {
+impl Skribbl {
     pub fn new(
         opts: GameOpts,
         users: Vec<Username>,
         shared_server_words: Arc<Vec<String>>,
     ) -> Self {
         let words = WordProducer::new(
-            opts.custom_words,
+            Vec::new(),
             shared_server_words,
             !opts.only_custom_words,
             NUM_OF_WORDS_PER_TURN,
@@ -113,7 +113,7 @@ impl SkribblState {
             canvas: Default::default(),
         };
 
-        let mut new = SkribblState {
+        let mut new = Skribbl {
             info,
             players_left_in_round: Vec::new(),
             draw_time: opts.draw_time,
@@ -155,9 +155,10 @@ impl SkribblState {
         }
 
         // set next turn
+        let words = self.words.next().unwrap();
         self.info.state = GameState::Playing(Turn {
             who_is_drawing: self.players_left_in_round.pop().unwrap(),
-            phase: TurnPhase::ChoosingWord(self.words.next().unwrap()),
+            phase: TurnPhase::ChoosingWord(words),
         });
         self.info.next_phase_timestamp = utils::get_time_now() + CHOOSE_WORDS_TIME;
         self.info.next_phase_timestamp = utils::get_time_now(); // skip choosing word for now

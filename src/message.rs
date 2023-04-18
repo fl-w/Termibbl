@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::data::{Color, Coord, GameInfo, GameOpts, GameState, PlayerData, Username};
 
 /// number of seconds between each heartbeat sent by client
-pub const HEARTBEAT_INTERVAL: u64 = 4;
+pub const HEARTBEAT_INTERVAL: u64 = 10;
 
 /// Client -> Server
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -32,9 +32,8 @@ pub enum ToClient {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum RoomRequest {
-    Find,
-    Create,
     Join(String), // room-key
+    Find,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -98,8 +97,8 @@ impl ChatMessage {
 
     pub fn inner(&self) -> &str {
         match self {
-            ChatMessage::System(msg) => &msg,
-            ChatMessage::User(_, msg) => &msg,
+            ChatMessage::System(msg) => msg,
+            ChatMessage::User(_, msg) => msg,
         }
     }
 
