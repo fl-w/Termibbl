@@ -12,8 +12,11 @@ pub enum Error {
     TermError(#[from] crossterm::ErrorKind),
     #[error("IO error")]
     IOError(#[from] std::io::Error),
+<<<<<<< Updated upstream
     #[error("unimplemented feature: `{0}`")]
     UnimplementedFeature(String),
+=======
+>>>>>>> Stashed changes
 }
 
 impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
