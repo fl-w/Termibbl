@@ -31,6 +31,7 @@ pub struct NetworkMessage<T> {
 }
 
 impl<T> NetworkMessage<T> {
+
     pub fn new() -> Self { Self { __: PhantomData } }
 }
 

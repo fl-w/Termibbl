@@ -26,6 +26,10 @@ enum SubOpt {
     Server(server::CliOpts),
 }
 
+fn add(x: usize, y:usize) -> usize{
+    x+y
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli: Opt = argh::from_env();
@@ -71,16 +75,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// fn words<'a>(words: &'a Vec<String>) -> impl std::iter::Iterator<Item = &'a str> {
-//     let mut num = 0;
-//     std::iter::from_fn(move || {
-//         let result;
-//         if num < n {
-//             result = Some(num);
-//             num += 1
-//         } else {
-//             result = None
-//         }
-//         result
-//     })
-// }
+fn words<'a>(words: &'a Vec<String>) -> impl std::iter::Iterator<Item = &'a str> {
+    let mut num = 0;
+    std::iter::from_fn(move || {
+        let result;
+        if num < n {
+            result = Some(num);
+            num += 1
+        } else {
+            result = None
+        }
+        result
+    })
+}

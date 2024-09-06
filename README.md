@@ -10,7 +10,7 @@ Created in Rust
 
 #### Nix
 ```sh
-git clone https://github.com/fl-w/Termibbl
+git clone https://github.com/blocktrustcloud/Termibbl
 cd Termibbl
 nix build
 ```
@@ -25,7 +25,7 @@ termibbl
 #### Cargo
 
 ```sh
-git clone https://github.com/fl-w/Termibbl
+git clone https://github.com/blocktrustcloud/Termibbl
 cd Termibbl
 cargo build --release
 ```
